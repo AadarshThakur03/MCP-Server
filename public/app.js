@@ -55,11 +55,36 @@ function showCommentError(message) {
   els.commentError.classList.remove('hidden');
 }
 
-async function apiRequest(path, options = {}) {
-  const res = await fetch(path, {
+// Asks for username/password, calls /login and stores the JWT
+async function login() {
+  const username = window.prompt('Username (e.g. aadarsh)');
+  const password = window.prompt('Password (e.g. password123)');
+  const res = await fetch('http://localhost:3002/login', {
+    method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  });
+  const body = await res.json();
+  if (!res.ok) throw new Error(body.error || 'Login failed');
+  localStorage.setItem('token', body.token);
+}
+
+async function apiRequest(path, options = {}, retried = false) {
+  const token = localStorage.getItem('token');
+  const res = await fetch(path, {
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
     ...options,
   });
+
+  // Not logged in (or token expired): log in once and retry
+  if (res.status === 401 && !retried) {
+    localStorage.removeItem('token');
+    await login();
+    return apiRequest(path, options, true);
+  }
 
   const contentType = res.headers.get('content-type');
   const isJson = contentType && contentType.includes('application/json');
