@@ -17,9 +17,11 @@ const API_BASE = process.env.API_BASE_URL || 'http://localhost:3002';
 const VALID_CATEGORIES = ['tech', 'finance', 'lifestyle'];
 
 // --- API client: call Posts API and return parsed JSON or throw with message ---
-async function api(method, path, body) {
+// authHeader is the "Authorization" header the MCP client sent us; we forward it to the API
+async function api(method, path, body, authHeader) {
   const url = path.startsWith('http') ? path : `${API_BASE}${path}`;
   const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  if (authHeader) opts.headers.Authorization = authHeader;
   if (body && (method === 'POST' || method === 'PUT')) opts.body = JSON.stringify(body);
   const res = await fetch(url, opts);
   const text = await res.text();
@@ -57,7 +59,10 @@ function validateCommentInput(args) {
 }
 
 // --- Build MCP server with tools (stateless: create per request) ---
-function createMcpServer() {
+function createMcpServer(authHeader) {
+  // Every tool calls the API with the same token the MCP client sent
+  const callApi = (method, path, body) => api(method, path, body, authHeader);
+
   const server = new McpServer({
     name: 'posts-api-mcp',
     version: '1.0.0',
@@ -75,7 +80,7 @@ function createMcpServer() {
   }, async (args) => {
     const err = validatePostInput(args);
     if (err) throw new Error(err);
-    const post = await api('POST', '/posts', {
+    const post = await callApi('POST', '/posts', {
       title: args.title.trim(),
       author: args.author.trim(),
       category: args.category,
@@ -88,7 +93,7 @@ function createMcpServer() {
     description: 'List all posts from the API.',
     inputSchema: {}
   }, async () => {
-    const posts = await api('GET', '/posts');
+    const posts = await callApi('GET', '/posts');
     return { content: [{ type: 'text', text: JSON.stringify(posts, null, 2) }] };
   });
 
@@ -98,7 +103,7 @@ function createMcpServer() {
       postId: z.string().describe('MongoDB ObjectId of the post')
     }
   }, async (args) => {
-    const post = await api('GET', `/posts/${args.postId}`);
+    const post = await callApi('GET', `/posts/${args.postId}`);
     return { content: [{ type: 'text', text: JSON.stringify(post, null, 2) }] };
   });
 
@@ -114,7 +119,7 @@ function createMcpServer() {
   }, async (args) => {
     const err = validatePostInput(args);
     if (err) throw new Error(err);
-    const post = await api('PUT', `/posts/${args.postId}`, {
+    const post = await callApi('PUT', `/posts/${args.postId}`, {
       title: args.title.trim(),
       author: args.author.trim(),
       category: args.category,
@@ -129,7 +134,7 @@ function createMcpServer() {
       postId: z.string().describe('MongoDB ObjectId of the post')
     }
   }, async (args) => {
-    const result = await api('DELETE', `/posts/${args.postId}`);
+    const result = await callApi('DELETE', `/posts/${args.postId}`);
     return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
   });
 
@@ -143,7 +148,7 @@ function createMcpServer() {
   }, async (args) => {
     const err = validateCommentInput(args);
     if (err) throw new Error(err);
-    const comment = await api('POST', `/posts/${args.postId}/comments`, {
+    const comment = await callApi('POST', `/posts/${args.postId}/comments`, {
       text: args.text.trim(),
       commenter: args.commenter.trim()
     });
@@ -156,7 +161,7 @@ function createMcpServer() {
       postId: z.string().describe('MongoDB ObjectId of the post')
     }
   }, async (args) => {
-    const comments = await api('GET', `/posts/${args.postId}/comments`);
+    const comments = await callApi('GET', `/posts/${args.postId}/comments`);
     return { content: [{ type: 'text', text: JSON.stringify(comments, null, 2) }] };
   });
 
@@ -211,7 +216,7 @@ After each tool call, report the result briefly. Complete all four steps in orde
 
 // --- /mcp: no auth, streamable HTTP ---
 app.post('/mcp', async (req, res) => {
-  const server = createMcpServer();
+  const server = createMcpServer(req.headers.authorization);
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   try {
     await server.connect(transport);

@@ -7,8 +7,17 @@ app.use(express.static('public'));
 const cors=require("cors");
 app.use(cors())
 
+const jwt = require('jsonwebtoken');
+
 const PORT = 3002;
 const VALID_CATEGORIES = ['tech', 'finance', 'lifestyle'];
+const JWT_SECRET = process.env.JWT_SECRET || 'mcp-demo-secret';
+
+// Demo users (in a real app these live in the database with hashed passwords)
+const USERS = [
+  { username: 'aadarsh', password: 'password123' },
+  { username: 'student', password: 'student123' }
+];
 
 const postSchema = new mongoose.Schema({
   title: { type: String, required: true },
@@ -55,6 +64,33 @@ async function getPost(id) {
 function sendError(res, status, message) {
   return res.status(status).json({ error: message });
 }
+
+// POST /login -> returns a JWT for a valid username/password
+app.post('/login', (req, res) => {
+  const { username, password } = req.body || {};
+  const user = USERS.find(u => u.username === username && u.password === password);
+  if (!user) return sendError(res, 401, 'Invalid username or password');
+  const token = jwt.sign({ username: user.username }, JWT_SECRET, { expiresIn: '1h' });
+  return res.json({ token });
+});
+
+// Auth middleware: expects "Authorization: Bearer <token>"
+function requireAuth(req, res, next) {
+  const header = req.headers.authorization || '';
+  const [scheme, token] = header.split(' ');
+  if (scheme !== 'Bearer' || !token) {
+    return sendError(res, 401, 'Unauthorized: missing token. Send "Authorization: Bearer <token>"');
+  }
+  try {
+    req.user = jwt.verify(token, JWT_SECRET);
+    return next();
+  } catch (err) {
+    return sendError(res, 401, `Unauthorized: ${err.message}`);
+  }
+}
+
+// Every /posts route below requires a valid token
+app.use('/posts', requireAuth);
 
 // POST /posts
 app.post('/posts', async (req, res) => {
